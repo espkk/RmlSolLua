@@ -38,6 +38,11 @@ namespace Rml::SolLua
 				return m_self->Get(ptr, variant);
 			}
 
+			bool Set(void* ptr, const Variant& variant) override
+			{
+				return m_self->Set(ptr, variant);
+			}
+
 			SolLuaDataModelProxy* m_self;
 		};
 
