@@ -27,7 +27,7 @@ namespace Rml::SolLua
 		DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override;
 		StringList ReflectMemberNames() override;
 
-		void attachUservalueTo(sol::object& target) const;
+		void attachRawTableAsUservalueTo(sol::object& target) const;
 		sol::object& luaUserdata();
 
 		void bind(bool topLevel);

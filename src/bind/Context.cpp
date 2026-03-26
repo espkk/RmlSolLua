@@ -67,7 +67,7 @@ namespace Rml::SolLua
 			}
 
 			// Create data model.
-			auto constructor = self.CreateDataModel(name);
+			auto constructor = self.CreateDataModel(name, nullptr, true);
 
 			// Already created?  Get existing.
 			if (!constructor)
@@ -84,7 +84,7 @@ namespace Rml::SolLua
 
 			// Alias data model to its top level proxy and push as shared_ptr userdata.
 			sol::object obj = sol::make_object(s, std::shared_ptr<SolLuaDataModelProxy>(dataModel, &proxy));
-			proxy.attachUservalueTo(obj);
+			proxy.attachRawTableAsUservalueTo(obj);
 			return obj;
 		}
 	} // namespace datamodel

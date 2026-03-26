@@ -127,3 +127,21 @@ if (NOT RmlSolLua_FoundLua)
 else()
 	message(STATUS "Found ${RmlSolLua_FoundLua}.")
 endif()
+
+# Tests (only if Catch2 is available)
+if(TARGET Catch2::Catch2WithMain)
+	add_executable(rmlsollua_datamodel_test tests/datamodel_test.cpp)
+	target_link_libraries(rmlsollua_datamodel_test PRIVATE
+		Catch2::Catch2WithMain
+		RmlSolLua
+	)
+	if(TARGET PkgConfig::LuaJIT)
+		target_link_libraries(rmlsollua_datamodel_test PRIVATE PkgConfig::LuaJIT)
+	elseif(TARGET PkgConfig::luajit)
+		target_link_libraries(rmlsollua_datamodel_test PRIVATE PkgConfig::luajit)
+	elseif(LUA_LIBRARIES)
+		target_link_libraries(rmlsollua_datamodel_test PRIVATE ${LUA_LIBRARIES})
+	endif()
+	target_compile_features(rmlsollua_datamodel_test PRIVATE cxx_std_23)
+	set_target_properties(rmlsollua_datamodel_test PROPERTIES FOLDER "Tests")
+endif()
