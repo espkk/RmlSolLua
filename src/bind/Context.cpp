@@ -57,13 +57,13 @@ namespace Rml::SolLua
 		/// <param name="model">The table to bind as the data model.</param>
 		/// <param name="s">Lua state.</param>
 		/// <returns>A unique pointer to a Sol Lua Data Model.</returns>
-		static std::shared_ptr<SolLuaDataModelProxy>
+		static sol::object
 		openDataModel(Rml::Context& self, const Rml::String& name, sol::object model, sol::this_state s)
 		{
 			if (model.get_type() != sol::type::table)
 			{
 				Rml::Log::Message(Log::LT_ERROR, "Data model must be a table.");
-				return nullptr;
+				return sol::make_object(s, sol::lua_nil);
 			}
 
 			// Create data model.
@@ -75,14 +75,20 @@ namespace Rml::SolLua
 				constructor = self.GetDataModel(name);
 				if (!constructor)
 				{
-					return nullptr;
+					return sol::make_object(s, sol::lua_nil);
 				}
 			}
 
 			auto dataModel = std::make_shared<SolLuaDataModel>(model.as<sol::table>(), constructor);
 
-			// Alias data model to it's top level proxy.
-			return {dataModel, &dataModel->topLevelProxy()};
+			// Alias data model to its top level proxy and push as shared_ptr userdata.
+			lua_State* L = s;
+			sol::object obj = sol::make_object(L, std::shared_ptr<SolLuaDataModelProxy>(dataModel, &dataModel->topLevelProxy()));
+			obj.push(L);
+			dataModel->topLevelProxy().table().push(L);
+			lua_setuservalue(L, -2);
+			lua_pop(L, 1);
+			return obj;
 		}
 	} // namespace datamodel
 

@@ -23,13 +23,24 @@ namespace Rml::SolLua
 		DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override;
 		StringList ReflectMemberNames() override;
 
-		sol::object get(const sol::object& key) const;
-		void set(const sol::object& key, sol::object value);
+		static sol::object luaIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::this_state ts);
+		static void luaNewIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::stack_object value, sol::this_state ts);
+
+		sol::table& table()
+		{
+			return m_table;
+		}
+		const sol::table& table() const
+		{
+			return m_table;
+		}
 
 		void bind(bool topLevel);
 		void rebind(const sol::table& newTable);
 
 	private:
+		void cacheUserdata();
+
 		SolLuaDataModel* m_datamodel;
 		sol::table m_table;
 
@@ -43,6 +54,9 @@ namespace Rml::SolLua
 
 		// Not string_view to avoid transient copy since Rml expects String&
 		const std::string* m_topLevelKey = nullptr;
+
+		// Cached Lua userdata for this proxy (used by __index to avoid per-call allocation)
+		sol::object m_luaUserdata;
 	};
 
 	class SolLuaDataModel

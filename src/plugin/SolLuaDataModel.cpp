@@ -285,55 +285,98 @@ namespace Rml::SolLua
 		return names;
 	}
 
-	sol::object SolLuaDataModelProxy::get(const sol::object& key) const
+	void SolLuaDataModelProxy::cacheUserdata()
 	{
-		std::string skey = key.is<std::string>() ? key.as<std::string>() : std::format("[{}]", key.as<int>() - 1);
-		auto proxyIt = m_children.find(skey);
-		if (proxyIt != m_children.end())
+		lua_State* L = m_table.lua_state();
+		m_luaUserdata = sol::make_object_userdata(L, this);
+
+		// Attach the backing Lua table as the userdata's uservalue
 		{
-			return sol::make_object_userdata(m_table.lua_state(), &proxyIt->second);
+			m_luaUserdata.push(L);   // [ud]
+			m_table.push(L);         // [ud, tbl]
+			lua_setuservalue(L, -2); // [ud]
+			lua_pop(L, 1);           // []
 		}
-		return m_table.get<sol::object>(key);
 	}
 
-	void SolLuaDataModelProxy::set(const sol::object& key, sol::object value)
+	sol::object SolLuaDataModelProxy::luaIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::this_state ts)
 	{
+		lua_State* L = ts;
 		std::string skey = key.is<std::string>() ? key.as<std::string>() : std::format("[{}]", key.as<int>() - 1);
-		m_table.set(key, value);
+
+		auto it = self.m_children.find(skey);
+		if (it != self.m_children.end())
+		{
+			if (!it->second.m_luaUserdata.valid())
+				it->second.cacheUserdata();
+			return it->second.m_luaUserdata;
+		}
+
+		// Raw lookup in the uservalue table (the proxy's backing Lua table)
+		{
+			lua_getuservalue(L, 1); // [tbl]
+			key.push(L);            // [tbl, key]
+			lua_rawget(L, -2);      // [tbl, value]
+			sol::object result(L, -1);
+			lua_pop(L, 2); // []
+			return result;
+		}
+	}
+
+	void SolLuaDataModelProxy::luaNewIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::stack_object value, sol::this_state ts)
+	{
+		lua_State* L = ts;
+		std::string skey = key.is<std::string>() ? key.as<std::string>() : std::format("[{}]", key.as<int>() - 1);
+
+		// Raw store into the uservalue table (the proxy's backing Lua table)
+		{
+			lua_getuservalue(L, 1); // [tbl]
+			key.push(L);            // [tbl, key]
+			value.push(L);          // [tbl, key, value]
+			lua_rawset(L, -3);      // [tbl]
+			lua_pop(L, 1);          // []
+		}
 
 		if (value.get_type() == sol::type::table)
 		{
-			const auto proxyTableIt = m_children.find(skey);
-			if (proxyTableIt == m_children.end() && IsArrayIndex(skey) && m_topLevelKey != nullptr)
+			const auto proxyTableIt = self.m_children.find(skey);
+			if (proxyTableIt == self.m_children.end() && IsArrayIndex(skey) && self.m_topLevelKey != nullptr)
 			{
 				// New array element
-				auto childProxyIt = m_children.try_emplace(skey, m_datamodel, value.as<sol::table>());
+				auto childProxyIt = self.m_children.try_emplace(skey, self.m_datamodel, value.as<sol::table>());
 				RMLUI_ASSERT(childProxyIt.second);
-				childProxyIt.first->second.m_topLevelKey = m_topLevelKey;
+				childProxyIt.first->second.m_topLevelKey = self.m_topLevelKey;
 				childProxyIt.first->second.bind(false);
 			}
 			else
 			{
+				if (proxyTableIt == self.m_children.end())
+				{
+					Rml::Log::Message(
+					    Log::LT_ERROR, "[LUA][ERROR] Adding new named table to the datamodel is not supported, add it as an array element instead"
+					);
+					return;
+				}
+
 				// Existing element - rebind nested table's proxy
-				RMLUI_ASSERT(proxyTableIt != m_children.end());
-				proxyTableIt->second.rebind(value);
+				proxyTableIt->second.rebind(value.as<sol::table>());
 			}
 		}
 		else
 		{
-			if (!m_keys.contains(skey))
+			if (!self.m_keys.contains(skey))
 			{
 				// Late binding - new key has been just added (only for nested tables)
 				// Technically, we could do the same+`BindCustomDataVariable` for a top-level table as well,
 				// but it seems to be unsupported by RmlUi itself as it continues to assume that it doesn't exist
-				if (m_topLevelKey != nullptr)
+				if (self.m_topLevelKey != nullptr)
 				{
-					m_keys.emplace(skey);
+					self.m_keys.emplace(skey);
 				}
 			}
 		}
 
-		m_datamodel->constructor().GetModelHandle().DirtyVariable(m_topLevelKey ? *m_topLevelKey : skey);
+		self.m_datamodel->constructor().GetModelHandle().DirtyVariable(self.m_topLevelKey ? *self.m_topLevelKey : skey);
 	}
 
 	void SolLuaDataModelProxy::bind(bool topLevel)
@@ -428,7 +471,16 @@ namespace Rml::SolLua
 	{
 		m_children.clear(); // Orphan existing children
 		m_table = newTable; // Update table
-		bind(false);        // Nested rebind
+		// Update the uservalue to point to the new table
+		if (m_luaUserdata.valid())
+		{
+			lua_State* L = m_table.lua_state();
+			m_luaUserdata.push(L);   // [ud]
+			m_table.push(L);         // [ud, tbl]
+			lua_setuservalue(L, -2); // [ud]
+			lua_pop(L, 1);           // []
+		}
+		bind(false); // Nested rebind
 	}
 
 } // end namespace Rml::SolLua

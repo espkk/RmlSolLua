@@ -5,21 +5,33 @@
 
 namespace Rml::SolLua
 {
+	/// The following functions use uservalue/fenv to query the underlying table,
+	/// rather than accessing the proxy itself, to reduce indirection level and improve cache locality.
 	namespace functions
 	{
-		static sol::object dataModelGet(SolLuaDataModelProxy& self, const sol::object& key)
+		static int dataModelPairs(lua_State* L) // [-0, +3]
 		{
-			return self.get(key);
+			lua_getuservalue(L, 1);   // [tbl]
+			lua_getglobal(L, "next"); // [tbl, next]
+			lua_pushvalue(L, -2);     // [tbl, next, tbl]
+			lua_pushnil(L);           // [tbl, next, tbl, nil]
+			return 3;
 		}
 
-		static void dataModelSet(SolLuaDataModelProxy& self, const sol::object& key, sol::object value)
+		static int dataModelIpairs(lua_State* L) // [-0, +3]
 		{
-			self.set(key, value);
+			lua_getuservalue(L, 1);     // [tbl]
+			lua_getglobal(L, "ipairs"); // [tbl, ipairs]
+			lua_pushvalue(L, -2);       // [tbl, ipairs, tbl]
+			lua_call(L, 1, 3);          // [tbl, iter, tbl, 0]
+			return 3;
 		}
 
-		static sol::object dataModelLength(SolLuaDataModelProxy& self, sol::this_state state)
+		static int dataModelLen(lua_State* L) // [-0, +1]
 		{
-			return sol::make_object(state, self.Size(nullptr));
+			lua_getuservalue(L, 1);                                          // [tbl]
+			lua_pushinteger(L, static_cast<lua_Integer>(lua_rawlen(L, -1))); // [tbl, len]
+			return 1;
 		}
 	} // namespace functions
 
@@ -27,9 +39,11 @@ namespace Rml::SolLua
 	{
 		// clang-format off
 		lua.new_usertype<SolLuaDataModelProxy>("SolLuaDataModelProxy", sol::no_constructor,
-		    sol::meta_function::index, &functions::dataModelGet,
-		    sol::meta_function::new_index, &functions::dataModelSet,
-			sol::meta_function::length, &functions::dataModelLength
+			sol::meta_function::index, &SolLuaDataModelProxy::luaIndex,
+			sol::meta_function::new_index, &SolLuaDataModelProxy::luaNewIndex,
+			sol::meta_function::length, &functions::dataModelLen,
+			sol::meta_function::pairs, &functions::dataModelPairs,
+			sol::meta_function::ipairs, &functions::dataModelIpairs
 		);
 		// clang-format on
 	}
