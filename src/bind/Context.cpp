@@ -80,14 +80,11 @@ namespace Rml::SolLua
 			}
 
 			auto dataModel = std::make_shared<SolLuaDataModel>(model.as<sol::table>(), constructor);
+			auto& proxy = dataModel->topLevelProxy();
 
 			// Alias data model to its top level proxy and push as shared_ptr userdata.
-			lua_State* L = s;
-			sol::object obj = sol::make_object(L, std::shared_ptr<SolLuaDataModelProxy>(dataModel, &dataModel->topLevelProxy()));
-			obj.push(L);
-			dataModel->topLevelProxy().table().push(L);
-			lua_setuservalue(L, -2);
-			lua_pop(L, 1);
+			sol::object obj = sol::make_object(s, std::shared_ptr<SolLuaDataModelProxy>(dataModel, &proxy));
+			proxy.attachUservalueTo(obj);
 			return obj;
 		}
 	} // namespace datamodel

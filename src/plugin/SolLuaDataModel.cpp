@@ -108,9 +108,10 @@ namespace Rml::SolLua
 	{
 		if (ptr == nullptr)
 		{
-			// TODO: alternatively, the table can be serialized to a string and returned
-			Rml::Log::Message(Rml::Log::LT_ERROR, "[LUA][ERROR] Trying to access a table as a scalar from VariableDefinition::Get");
-			return false;
+			// Allow RmlUi's expression engine to pass a proxy to an event handler.
+			// luaUserdata() will be called lazily during variant conversion.
+			variant = this;
+			return true;
 		}
 
 		sol::object obj;
@@ -285,18 +286,29 @@ namespace Rml::SolLua
 		return names;
 	}
 
+	sol::object& SolLuaDataModelProxy::luaUserdata()
+	{
+		if (!m_luaUserdata.valid())
+		{
+			cacheUserdata();
+		}
+		return m_luaUserdata;
+	}
+
+	void SolLuaDataModelProxy::attachUservalueTo(sol::object& target) const
+	{
+		lua_State* L = m_table.lua_state();
+		target.push(L);          // [ud]
+		m_table.push(L);         // [ud, tbl]
+		lua_setuservalue(L, -2); // [ud]
+		lua_pop(L, 1);           // []
+	}
+
 	void SolLuaDataModelProxy::cacheUserdata()
 	{
 		lua_State* L = m_table.lua_state();
 		m_luaUserdata = sol::make_object_userdata(L, this);
-
-		// Attach the backing Lua table as the userdata's uservalue
-		{
-			m_luaUserdata.push(L);   // [ud]
-			m_table.push(L);         // [ud, tbl]
-			lua_setuservalue(L, -2); // [ud]
-			lua_pop(L, 1);           // []
-		}
+		attachUservalueTo(m_luaUserdata);
 	}
 
 	sol::object SolLuaDataModelProxy::luaIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::this_state ts)
@@ -307,9 +319,7 @@ namespace Rml::SolLua
 		auto it = self.m_children.find(skey);
 		if (it != self.m_children.end())
 		{
-			if (!it->second.m_luaUserdata.valid())
-				it->second.cacheUserdata();
-			return it->second.m_luaUserdata;
+			return it->second.luaUserdata();
 		}
 
 		// Raw lookup in the uservalue table (the proxy's backing Lua table)
@@ -471,14 +481,9 @@ namespace Rml::SolLua
 	{
 		m_children.clear(); // Orphan existing children
 		m_table = newTable; // Update table
-		// Update the uservalue to point to the new table
 		if (m_luaUserdata.valid())
 		{
-			lua_State* L = m_table.lua_state();
-			m_luaUserdata.push(L);   // [ud]
-			m_table.push(L);         // [ud, tbl]
-			lua_setuservalue(L, -2); // [ud]
-			lua_pop(L, 1);           // []
+			attachUservalueTo(m_luaUserdata);
 		}
 		bind(false); // Nested rebind
 	}

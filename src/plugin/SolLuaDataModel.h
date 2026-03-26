@@ -16,24 +16,19 @@ namespace Rml::SolLua
 	class SolLuaDataModelProxy final : public Rml::VariableDefinition
 	{
 	public:
+		static sol::object luaIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::this_state ts);
+		static void luaNewIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::stack_object value, sol::this_state ts);
+
 		SolLuaDataModelProxy(SolLuaDataModel* datamodel, sol::table table);
+
 		bool Get(void* ptr, Rml::Variant& variant) override;
 		bool Set(void* ptr, const Rml::Variant& variant) override;
 		int Size(void* ptr) override;
 		DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override;
 		StringList ReflectMemberNames() override;
 
-		static sol::object luaIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::this_state ts);
-		static void luaNewIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::stack_object value, sol::this_state ts);
-
-		sol::table& table()
-		{
-			return m_table;
-		}
-		const sol::table& table() const
-		{
-			return m_table;
-		}
+		void attachUservalueTo(sol::object& target) const;
+		sol::object& luaUserdata();
 
 		void bind(bool topLevel);
 		void rebind(const sol::table& newTable);
