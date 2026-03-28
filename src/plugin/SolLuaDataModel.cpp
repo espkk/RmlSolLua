@@ -78,7 +78,7 @@ namespace Rml::SolLua
 	    : m_constructor(constructor),
 	      m_topLevelProxy(this, model)
 	{
-		m_topLevelProxy.bind(true);
+		m_topLevelProxy.bind();
 	}
 
 	Rml::DataModelConstructor SolLuaDataModel::constructor() const
@@ -176,7 +176,6 @@ namespace Rml::SolLua
 		auto* key = const_cast<const char*>(static_cast<char*>(ptr));
 		if (IsArrayIndex(key))
 		{
-			// Pseudo-key: access by index
 			int idx;
 			std::from_chars_result result = std::from_chars(key + 1, key + std::strlen(key) - 1, idx);
 			RMLUI_ASSERT(result.ec == std::errc{} && "RmlUi failed to sanitize user input to be well-formed");
@@ -186,13 +185,11 @@ namespace Rml::SolLua
 				RMLUI_ERROR;
 				return false;
 			}
-			sol::table_proxy obj = m_table[idx + 1]; // Lua is 1-based
-			obj = makeObjectFromVariant(&variant, m_table.lua_state());
+			m_table[idx + 1] = makeObjectFromVariant(&variant, m_table.lua_state());
 		}
 		else
 		{
-			sol::table_proxy obj = m_table[key];
-			obj = makeObjectFromVariant(&variant, m_table.lua_state());
+			m_table[key] = makeObjectFromVariant(&variant, m_table.lua_state());
 		}
 		return true;
 	}
@@ -265,11 +262,10 @@ namespace Rml::SolLua
 
 		if (obj.get_type() == sol::type::table)
 		{
-			// Create child proxy on-demand
 			auto [it, inserted] = m_children.try_emplace(skey, m_datamodel, obj.as<sol::table>());
 			if (inserted)
 			{
-				it->second.m_topLevelKey = m_topLevelKey ? m_topLevelKey : &it->first;
+				it->second.m_topLevelKey = isTopLevel() ? &it->first : m_topLevelKey;
 			}
 			return {&it->second, nullptr};
 		}
@@ -330,6 +326,55 @@ namespace Rml::SolLua
 		attachRawTableAsUservalueTo(m_luaUserdata);
 	}
 
+	bool SolLuaDataModelProxy::isTopLevel() const
+	{
+		return m_topLevelKey == nullptr;
+	}
+
+	void SolLuaDataModelProxy::registerTopLevelTable(const std::string& key, const sol::table& table)
+	{
+		auto [it, inserted] = m_children.try_emplace(key, m_datamodel, table);
+		if (inserted)
+		{
+			it->second.m_topLevelKey = &it->first;
+			m_datamodel->constructor().BindCustomDataVariable(
+				key, Rml::DataVariable(&it->second, nullptr)
+			);
+		}
+	}
+
+	void SolLuaDataModelProxy::registerTopLevelScalar(const std::string& key)
+	{
+		auto [it, _] = m_keys.emplace(key);
+		m_datamodel->constructor().BindCustomDataVariable(
+			key, Rml::DataVariable(m_selfAsScalar.get(), const_cast<char*>(it->data()))
+		);
+	}
+
+	void SolLuaDataModelProxy::registerTopLevelCallback(const std::string& key, const sol::protected_function& func, lua_State* L)
+	{
+		m_datamodel->constructor().BindEventCallback(
+			key,
+			[cb = func,
+			 state = sol::state_view{L}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
+			{
+				if (cb.valid())
+				{
+					std::vector<sol::object> args;
+					for (const auto& variant : varlist)
+					{
+						args.push_back(makeObjectFromVariant(&variant, state));
+					}
+					auto pfr = cb(event, sol::as_args(args));
+					if (!pfr.valid())
+					{
+						ErrorHandler(cb.lua_state(), std::move(pfr));
+					}
+				}
+			}
+		);
+	}
+
 	sol::object SolLuaDataModelProxy::luaIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::this_state ts)
 	{
 		std::string skey = key.is<std::string>() ? key.as<std::string>() : std::format("[{}]", key.as<int>() - 1);
@@ -355,23 +400,24 @@ namespace Rml::SolLua
 	void SolLuaDataModelProxy::luaNewIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::stack_object value, sol::this_state ts)
 	{
 		std::string skey = key.is<std::string>() ? key.as<std::string>() : std::format("[{}]", key.as<int>() - 1);
+		const bool isTopLevelNamed = self.isTopLevel() && !IsArrayIndex(skey);
 
 		// Top-level type changes (scalar<->table) are forbidden because RmlUi's
-		// BindVariable uses emplace -- bindings cannot be replaced after creation.
-		if (self.m_topLevelKey == nullptr && !IsArrayIndex(skey))
+		// BindVariable uses emplace - bindings cannot be replaced after creation.
+		if (isTopLevelNamed)
 		{
 			if (value.get_type() == sol::type::table && self.m_keys.contains(skey))
 			{
 				Rml::Log::Message(Rml::Log::LT_ERROR, "[LUA][ERROR] Cannot change top-level scalar '%s' to a table: "
-				                                      "RmlUi bindings are immutable after creation",
-				                  skey.c_str());
+													  "RmlUi bindings are immutable after creation",
+								  skey.c_str());
 				return;
 			}
 			if (value.get_type() != sol::type::table && value.get_type() != sol::type::lua_nil && self.m_children.contains(skey))
 			{
 				Rml::Log::Message(Rml::Log::LT_ERROR, "[LUA][ERROR] Cannot change top-level table '%s' to a non-table: "
-				                                      "RmlUi bindings are immutable after creation",
-				                  skey.c_str());
+													  "RmlUi bindings are immutable after creation",
+								  skey.c_str());
 				return;
 			}
 		}
@@ -391,31 +437,21 @@ namespace Rml::SolLua
 			auto proxyIt = self.m_children.find(skey);
 			if (proxyIt != self.m_children.end())
 			{
-				// Existing child proxy - rebind with the new table
 				proxyIt->second.rebind(value.as<sol::table>());
 			}
-			else if (self.m_topLevelKey == nullptr && !IsArrayIndex(skey))
+			else if (isTopLevelNamed)
 			{
-				// New top-level table - create proxy and register with RmlUi
-				auto [it, inserted] = self.m_children.try_emplace(skey, self.m_datamodel, value.as<sol::table>());
-				if (inserted)
-				{
-					it->second.m_topLevelKey = &it->first;
-					self.m_datamodel->constructor().BindCustomDataVariable(
-					    skey, Rml::DataVariable(&it->second, nullptr)
-					);
-				}
+				self.registerTopLevelTable(skey, value.as<sol::table>());
 			}
-			// else: nested - child proxy will be created lazily via Child()
 
-			if (self.m_topLevelKey != nullptr)
+			if (!self.isTopLevel())
 			{
 				self.m_keys.erase(skey);
 			}
 		}
 		else if (value.get_type() == sol::type::lua_nil)
 		{
-			if (self.m_topLevelKey == nullptr)
+			if (self.isTopLevel())
 			{
 				// Top-level removal: keep proxies/keys alive (RmlUi holds raw pointers).
 				// Rebind any child proxy to an empty table so descendants return empty values.
@@ -427,66 +463,33 @@ namespace Rml::SolLua
 			}
 			else
 			{
-				// Nested removal: erase for clean lazy recreation when re-added.
 				self.m_children.erase(skey);
 				self.m_keys.erase(skey);
 			}
 		}
-		else if (value.get_type() == sol::type::function && self.m_topLevelKey == nullptr && !IsArrayIndex(skey))
+		else if (value.get_type() == sol::type::function && isTopLevelNamed)
 		{
-			// New top-level event callback (BindEventCallback rejects duplicates)
-			self.m_datamodel->constructor().BindEventCallback(
-			    skey,
-			    [cb = sol::protected_function{value},
-			     state = sol::state_view{ts}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
-			    {
-				    if (cb.valid())
-				    {
-					    std::vector<sol::object> args;
-					    for (const auto& variant : varlist)
-					    {
-						    args.push_back(makeObjectFromVariant(&variant, state));
-					    }
-					    auto pfr = cb(event, sol::as_args(args));
-					    if (!pfr.valid())
-					    {
-						    ErrorHandler(cb.lua_state(), std::move(pfr));
-					    }
-				    }
-			    }
-			);
+			self.registerTopLevelCallback(skey, sol::protected_function{value}, ts);
 			return;
 		}
 		else
 		{
-			// Scalar (or nested function)
-			if (self.m_topLevelKey != nullptr)
+			if (!self.isTopLevel())
 			{
 				self.m_children.erase(skey);
 			}
 
-			if (self.m_topLevelKey == nullptr && !IsArrayIndex(skey) && !self.m_keys.contains(skey))
+			if (isTopLevelNamed && !self.m_keys.contains(skey))
 			{
-				// New top-level scalar - register with RmlUi
-				auto [it, _] = self.m_keys.emplace(skey);
-				self.m_datamodel->constructor().BindCustomDataVariable(
-				    skey, Rml::DataVariable(self.m_selfAsScalar.get(), const_cast<char*>(it->data()))
-				);
+				self.registerTopLevelScalar(skey);
 			}
 		}
 
-		self.m_datamodel->constructor().GetModelHandle().DirtyVariable(self.m_topLevelKey ? *self.m_topLevelKey : skey);
+		self.m_datamodel->constructor().GetModelHandle().DirtyVariable(self.isTopLevel() ? skey : *self.m_topLevelKey);
 	}
 
-	void SolLuaDataModelProxy::bind(bool topLevel)
+	void SolLuaDataModelProxy::bind()
 	{
-		// Nested tables are resolved lazily via Child() and luaIndex().
-		// Only the top-level table needs eager iteration to register variables/callbacks with RmlUi.
-		if (!topLevel)
-		{
-			return;
-		}
-
 		for (auto& [key, value] : m_table)
 		{
 			std::string skey;
@@ -500,9 +503,7 @@ namespace Rml::SolLua
 				const bool isInteger = std::isfinite(number) && std::floor(number) == number;
 				if (isInteger && number >= 0)
 				{
-					// Assign a pseudo-key for numeric indices
-					// Assuming it fits into uint64_t to simplify logic
-					skey = std::format("[{}]", static_cast<std::uint64_t>(number)); // Lua is 1-based
+					skey = std::format("[{}]", static_cast<std::uint64_t>(number));
 				}
 			}
 			if (skey.empty())
@@ -511,7 +512,6 @@ namespace Rml::SolLua
 				return;
 			}
 
-			// Skip array elements at top level - they are accessed via Child() on the top-level proxy
 			if (IsArrayIndex(skey))
 			{
 				continue;
@@ -519,51 +519,22 @@ namespace Rml::SolLua
 
 			if (value.get_type() == sol::type::table)
 			{
-				// Create child proxy for top-level named tables (required for BindCustomDataVariable).
-				// The child proxy's own nested structure is resolved lazily via Child().
-				auto childProxyIt = m_children.try_emplace(skey, m_datamodel, value.as<sol::table>());
-				RMLUI_ASSERT(childProxyIt.second);
-				childProxyIt.first->second.m_topLevelKey = &childProxyIt.first->first;
-				m_datamodel->constructor().BindCustomDataVariable(
-				    skey, Rml::DataVariable(&childProxyIt.first->second, nullptr)
-				);
+				registerTopLevelTable(skey, value.as<sol::table>());
 			}
 			else if (value.get_type() == sol::type::function)
 			{
-				m_datamodel->constructor().BindEventCallback(
-				    skey,
-				    [cb = sol::protected_function{value},
-				     state = sol::state_view{m_table.lua_state()}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
-				    {
-					    if (cb.valid())
-					    {
-						    std::vector<sol::object> args;
-						    for (const auto& variant : varlist)
-						    {
-							    args.push_back(makeObjectFromVariant(&variant, state));
-						    }
-						    auto pfr = cb(event, sol::as_args(args));
-						    if (!pfr.valid())
-						    {
-							    ErrorHandler(cb.lua_state(), std::move(pfr));
-						    }
-					    }
-				    }
-				);
+				registerTopLevelCallback(skey, sol::protected_function{value}, m_table.lua_state());
 			}
 			else
 			{
-				auto it = m_keys.emplace(skey);
-				m_datamodel->constructor().BindCustomDataVariable(
-				    skey, Rml::DataVariable(m_selfAsScalar.get(), const_cast<char*>(it.first->data()))
-				);
+				registerTopLevelScalar(skey);
 			}
 		}
 	}
 
 	void SolLuaDataModelProxy::rebind(const sol::table& newTable)
 	{
-		RMLUI_ASSERT(m_topLevelKey != nullptr && "Rebind should never be done on top-level table");
+		RMLUI_ASSERT(!isTopLevel() && "Rebind should never be done on top-level table");
 
 		// Orphan existing children and cached keys - they'll be recreated lazily
 		m_children.clear();

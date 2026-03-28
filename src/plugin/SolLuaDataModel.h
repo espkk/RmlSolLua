@@ -30,10 +30,16 @@ namespace Rml::SolLua
 		void attachRawTableAsUservalueTo(sol::object& target) const;
 		sol::object& luaUserdata();
 
-		void bind(bool topLevel);
+		void bind();
 		void rebind(const sol::table& newTable);
 
 	private:
+		bool isTopLevel() const;
+
+		void registerTopLevelTable(const std::string& key, const sol::table& table);
+		void registerTopLevelScalar(const std::string& key);
+		void registerTopLevelCallback(const std::string& key, const sol::protected_function& func, lua_State* L);
+
 		void cacheUserdata();
 
 		SolLuaDataModel* m_datamodel;
