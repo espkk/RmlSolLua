@@ -164,7 +164,7 @@ namespace Rml::SolLua
 	bool SolLuaDataModelProxy::Set(void* ptr, const Rml::Variant& variant)
 	{
 		RMLUI_ASSERT(variant.GetType() != Variant::VOIDPTR && "VOIDPTR is reserved for datamodel reference and unexpected in this context."
-		                                                      "If this assert breaks, we need to change the approach (see `Get()`).");
+		            "If this assert breaks, we need to change the approach (see `Get()`).");
 
 		if (ptr == nullptr)
 		{
@@ -385,13 +385,11 @@ namespace Rml::SolLua
 			return it->second.luaUserdata();
 		}
 
-		// Raw lookup in the uservalue table (faster equivalent to m_table).
-		// Tables are returned as raw Lua tables - proxies are only created when
-		// RmlUi accesses the path via Child().
+		// Lookup in the uservalue table (the backing Lua table).
 		lua_State* L = ts;
 		lua_getuservalue(L, 1); // [tbl]
-		key.push(L);            // [tbl, key]
-		lua_rawget(L, -2);      // [tbl, value]
+		key.push(L);      // [tbl, key]
+		lua_gettable(L, -2);    // [tbl, value]
 		sol::object result(L, -1);
 		lua_pop(L, 2); // []
 		return result;
@@ -422,13 +420,13 @@ namespace Rml::SolLua
 			}
 		}
 
-		// Raw store into the uservalue table (faster equivalent to `m_table`)
+		// Store into the uservalue table (the backing Lua table).
 		{
 			lua_State* L = ts;
 			lua_getuservalue(L, 1); // [tbl]
 			key.push(L);            // [tbl, key]
-			value.push(L);          // [tbl, key, value]
-			lua_rawset(L, -3);      // [tbl]
+			value.push(L);     // [tbl, key, value]
+			lua_settable(L, -3);    // [tbl]
 			lua_pop(L, 1);          // []
 		}
 

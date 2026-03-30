@@ -29,8 +29,8 @@ namespace Rml::SolLua
 
 		static int dataModelLen(lua_State* L) // [-0, +1]
 		{
-			lua_getuservalue(L, 1);                                          // [tbl]
-			lua_pushinteger(L, static_cast<lua_Integer>(lua_rawlen(L, -1))); // [tbl, len]
+			lua_getuservalue(L, 1); // [tbl]
+			lua_len(L, -1);  // [tbl, len]
 			return 1;
 		}
 	} // namespace functions
