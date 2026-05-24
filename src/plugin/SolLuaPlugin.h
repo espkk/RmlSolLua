@@ -30,6 +30,7 @@ namespace Rml::SolLua
 
 		void OnInitialise() override;
 		void OnShutdown() override;
+		void OnDataModelDestroy(Rml::Context* context, const Rml::String& name) override;
 
 		std::unique_ptr<SolLuaDocumentElementInstancer> document_element_instancer;
 		std::unique_ptr<SolLuaEventListenerInstancer> event_listener_instancer;

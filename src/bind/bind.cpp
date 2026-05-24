@@ -5,6 +5,7 @@
 #include SOLHPP
 
 #include "bind.h"
+#include "plugin/SolLuaDataModel.h"
 
 namespace Rml::SolLua
 {
@@ -40,9 +41,12 @@ namespace Rml::SolLua
 			case Rml::Variant::VECTOR2:
 				return sol::make_object_userdata<Rml::Vector2f>(s, variant->Get<Rml::Vector2f>());
 			case Rml::Variant::VOIDPTR:
-				return sol::make_object(s, variant->Get<void*>());
-			default:
-				return sol::make_object(s, sol::nil);
+			{
+				// The only place where we pass void* to Lua is for the data model proxy.
+				auto* proxy = static_cast<SolLuaDataModelProxy*>(variant->Get<void*>());
+				return proxy->luaUserdata();
+			}
+			default:;
 		}
 
 		return sol::make_object(s, sol::nil);
