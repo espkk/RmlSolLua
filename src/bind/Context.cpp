@@ -66,26 +66,24 @@ namespace Rml::SolLua
 				return sol::make_object(s, sol::lua_nil);
 			}
 
-			// Create data model.
-			auto constructor = self.CreateDataModel(name, nullptr, true);
-
-			// Already created?  Get existing.
-			if (!constructor)
+			Rml::DataModelConstructor constructor;
+			auto data_models = self.GetDataModels();
+			if (auto it = data_models.find(name); it != data_models.end())
 			{
-				constructor = self.GetDataModel(name);
-				if (!constructor)
-				{
-					return sol::make_object(s, sol::lua_nil);
-				}
+				constructor = it->second;
+			}
+			else
+			{
+				constructor = self.CreateDataModel(name, nullptr, true);
 			}
 
-			auto dataModel = std::make_shared<SolLuaDataModel>(model.as<sol::table>(), constructor);
-			auto& proxy = dataModel->topLevelProxy();
+			if (!constructor)
+			{
+				return sol::make_object(s, sol::lua_nil);
+			}
 
-			// Alias data model to its top level proxy and push as shared_ptr userdata.
-			sol::object obj = sol::make_object(s, std::shared_ptr<SolLuaDataModelProxy>(dataModel, &proxy));
-			proxy.attachRawTableAsUservalueTo(obj);
-			return obj;
+			auto dataModel = SolLuaDataModel::GetOrCreate(&self, name, model.as<sol::table>(), constructor);
+			return dataModel->topLevelProxy().luaUserdata();
 		}
 	} // namespace datamodel
 

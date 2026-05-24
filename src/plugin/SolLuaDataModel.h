@@ -32,9 +32,12 @@ namespace Rml::SolLua
 
 		void bind();
 		void rebind(const sol::table& newTable);
+		void rebindRoot(const sol::table& newTable);
+		void markDisposed();
 
 	private:
 		bool isTopLevel() const;
+		bool isDisposed() const;
 
 		void registerTopLevelTable(const std::string& key, const sol::table& table);
 		void registerTopLevelScalar(const std::string& key);
@@ -60,15 +63,25 @@ namespace Rml::SolLua
 		sol::object m_luaUserdata;
 	};
 
-	class SolLuaDataModel
+	class SolLuaDataModel : public std::enable_shared_from_this<SolLuaDataModel>
 	{
 	public:
+		// Creates a new model or rebinds an existing one for the given (context, name).
+		// The returned shared_ptr keeps the model alive; the registry holds another
+		// strong ref until OnDataModelDestroy fires.
+		static std::shared_ptr<SolLuaDataModel> GetOrCreate(
+		    Rml::Context* context, const Rml::String& name, const sol::table& model, const Rml::DataModelConstructor& constructor
+		);
+		static void NotifyDestroyed(Rml::Context* context, const Rml::String& name);
+
 		SolLuaDataModel(const sol::table& model, const Rml::DataModelConstructor& constructor);
 
-		Rml::DataModelConstructor constructor() const;
-		SolLuaDataModelProxy& topLevelProxy();
+		Rml::DataModelConstructor constructor() const { return m_constructor; }
+		SolLuaDataModelProxy& topLevelProxy() { return m_topLevelProxy; }
+		bool isDisposed() const { return m_disposed; }
 
 	private:
+		bool m_disposed = false;
 		Rml::DataModelConstructor m_constructor;
 		SolLuaDataModelProxy m_topLevelProxy;
 	};

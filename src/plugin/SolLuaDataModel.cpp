@@ -72,6 +72,19 @@ namespace Rml::SolLua
 			return key[0] == '[';
 		}
 
+		// Registry of Lua-created data models, keyed by (Context*, name).
+		// Owns one strong shared_ptr per active model; OnDataModelDestroy releases it.
+		// Lua userdata holds another aliased shared_ptr, so the C++ memory survives
+		// until the last Lua ref is collected — at which point the disposed flag
+		// (set during NotifyDestroyed) has already made all operations inert.
+		using DataModelRegistry = std::unordered_map<Rml::Context*, std::unordered_map<Rml::String, std::shared_ptr<SolLuaDataModel>>>;
+
+		DataModelRegistry& GetDataModelRegistry()
+		{
+			static DataModelRegistry registry;
+			return registry;
+		}
+
 	} // namespace
 
 	SolLuaDataModel::SolLuaDataModel(const sol::table& model, const Rml::DataModelConstructor& constructor)
@@ -81,14 +94,49 @@ namespace Rml::SolLua
 		m_topLevelProxy.bind();
 	}
 
-	Rml::DataModelConstructor SolLuaDataModel::constructor() const
+	std::shared_ptr<SolLuaDataModel> SolLuaDataModel::GetOrCreate(
+	    Rml::Context* context, const Rml::String& name, const sol::table& model, const Rml::DataModelConstructor& constructor
+	)
 	{
-		return m_constructor;
+		auto& context_models = GetDataModelRegistry()[context];
+		auto it = context_models.find(name);
+		if (it == context_models.end())
+		{
+			auto ptr = std::make_shared<SolLuaDataModel>(model, constructor);
+			context_models.emplace(name, ptr);
+			return ptr;
+		}
+
+		// Re-opening: keep the same C++ model (RmlUi bindings are immutable) and
+		// rebind the root table so subsequent reads/writes see the new data.
+		it->second->m_constructor = constructor;
+		it->second->m_topLevelProxy.rebindRoot(model);
+		return it->second;
 	}
 
-	SolLuaDataModelProxy& SolLuaDataModel::topLevelProxy()
+	void SolLuaDataModel::NotifyDestroyed(Rml::Context* context, const Rml::String& name)
 	{
-		return m_topLevelProxy;
+		auto& registry = GetDataModelRegistry();
+		auto context_it = registry.find(context);
+		if (context_it == registry.end())
+		{
+			return;
+		}
+
+		auto model_it = context_it->second.find(name);
+		if (model_it != context_it->second.end())
+		{
+			auto& model = *model_it->second;
+			model.m_disposed = true;
+			model.m_constructor = {};
+			model.m_topLevelProxy.markDisposed();
+			context_it->second.erase(model_it);
+		}
+
+		if (context_it->second.empty())
+		{
+			registry.erase(context_it);
+		}
 	}
 
 	/// SolLuaDatamodelProxy
@@ -322,13 +370,21 @@ namespace Rml::SolLua
 	void SolLuaDataModelProxy::cacheUserdata()
 	{
 		lua_State* L = m_table.lua_state();
-		m_luaUserdata = sol::make_object_userdata(L, this);
+		// Aliased shared_ptr: shares ownership with the model so the C++ memory
+		// outlives native disposal as long as Lua holds any reference.
+		std::shared_ptr<SolLuaDataModelProxy> aliased(m_datamodel->shared_from_this(), this);
+		m_luaUserdata = sol::make_object(L, std::move(aliased));
 		attachRawTableAsUservalueTo(m_luaUserdata);
 	}
 
 	bool SolLuaDataModelProxy::isTopLevel() const
 	{
 		return m_topLevelKey == nullptr;
+	}
+
+	bool SolLuaDataModelProxy::isDisposed() const
+	{
+		return m_datamodel == nullptr || m_datamodel->isDisposed();
 	}
 
 	void SolLuaDataModelProxy::registerTopLevelTable(const std::string& key, const sol::table& table)
@@ -340,15 +396,21 @@ namespace Rml::SolLua
 			m_datamodel->constructor().BindCustomDataVariable(
 				key, Rml::DataVariable(&it->second, nullptr)
 			);
+			return;
 		}
+
+		it->second.rebind(table);
 	}
 
 	void SolLuaDataModelProxy::registerTopLevelScalar(const std::string& key)
 	{
-		auto [it, _] = m_keys.emplace(key);
-		m_datamodel->constructor().BindCustomDataVariable(
-			key, Rml::DataVariable(m_selfAsScalar.get(), const_cast<char*>(it->data()))
-		);
+		auto [it, inserted] = m_keys.emplace(key);
+		if (inserted)
+		{
+			m_datamodel->constructor().BindCustomDataVariable(
+				key, Rml::DataVariable(m_selfAsScalar.get(), const_cast<char*>(it->data()))
+			);
+		}
 	}
 
 	void SolLuaDataModelProxy::registerTopLevelCallback(const std::string& key, const sol::protected_function& func, lua_State* L)
@@ -386,9 +448,11 @@ namespace Rml::SolLua
 		}
 
 		// Lookup in the uservalue table (the backing Lua table).
+		// If the model has been disposed, m_table (and the uservalue) is empty,
+		// so this returns nil naturally without a special-case branch.
 		lua_State* L = ts;
 		lua_getuservalue(L, 1); // [tbl]
-		key.push(L);      // [tbl, key]
+		key.push(L);            // [tbl, key]
 		lua_gettable(L, -2);    // [tbl, value]
 		sol::object result(L, -1);
 		lua_pop(L, 2); // []
@@ -397,6 +461,13 @@ namespace Rml::SolLua
 
 	void SolLuaDataModelProxy::luaNewIndex(SolLuaDataModelProxy& self, sol::stack_object key, sol::stack_object value, sol::this_state ts)
 	{
+		// After native disposal m_constructor is cleared; calling DirtyVariable on
+		// it would null-deref the underlying DataModel*. Short-circuit instead.
+		if (self.isDisposed())
+		{
+			return;
+		}
+
 		std::string skey = key.is<std::string>() ? key.as<std::string>() : std::format("[{}]", key.as<int>() - 1);
 		const bool isTopLevelNamed = self.isTopLevel() && !IsArrayIndex(skey);
 
@@ -425,7 +496,7 @@ namespace Rml::SolLua
 			lua_State* L = ts;
 			lua_getuservalue(L, 1); // [tbl]
 			key.push(L);            // [tbl, key]
-			value.push(L);     // [tbl, key, value]
+			value.push(L);          // [tbl, key, value]
 			lua_settable(L, -3);    // [tbl]
 			lua_pop(L, 1);          // []
 		}
@@ -530,6 +601,44 @@ namespace Rml::SolLua
 		}
 	}
 
+	void SolLuaDataModelProxy::rebindRoot(const sol::table& newTable)
+	{
+		RMLUI_ASSERT(isTopLevel() && "Root rebind should only be done on the top-level table");
+
+		m_table = newTable;
+		if (m_luaUserdata.valid())
+		{
+			attachRawTableAsUservalueTo(m_luaUserdata);
+		}
+
+		// Children that disappeared (or whose value is no longer a table) need to
+		// be rebound to empty - RmlUi still holds raw pointers to their proxies.
+		// Children still present as tables are rebound by registerTopLevelTable
+		// when bind() walks the new table below.
+		for (auto& [key, child] : m_children)
+		{
+			sol::object obj = m_table[key];
+			if (obj.get_type() != sol::type::table)
+			{
+				child.rebind(sol::table(m_table.lua_state(), sol::create));
+			}
+		}
+
+		// Register any keys new to this table; idempotent for existing ones
+		// (registerTopLevelScalar/Table both no-op or rebind in place).
+		bind();
+
+		auto handle = m_datamodel->constructor().GetModelHandle();
+		for (const auto& key : m_keys)
+		{
+			handle.DirtyVariable(key);
+		}
+		for (const auto& [key, _] : m_children)
+		{
+			handle.DirtyVariable(key);
+		}
+	}
+
 	void SolLuaDataModelProxy::rebind(const sol::table& newTable)
 	{
 		RMLUI_ASSERT(!isTopLevel() && "Rebind should never be done on top-level table");
@@ -540,6 +649,20 @@ namespace Rml::SolLua
 
 		// Update table and attach it to userdata if already created
 		m_table = newTable;
+		if (m_luaUserdata.valid())
+		{
+			attachRawTableAsUservalueTo(m_luaUserdata);
+		}
+	}
+
+	void SolLuaDataModelProxy::markDisposed()
+	{
+		for (auto& [_, child] : m_children)
+		{
+			child.markDisposed();
+		}
+
+		m_table = sol::table(m_table.lua_state(), sol::create);
 		if (m_luaUserdata.valid())
 		{
 			attachRawTableAsUservalueTo(m_luaUserdata);

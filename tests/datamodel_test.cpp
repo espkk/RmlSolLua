@@ -350,6 +350,37 @@ TEST_CASE("Repeated table rebind across frames updates document each time", "[da
 	CHECK(innerRmlOf(doc, "mx") == "144");
 }
 
+TEST_CASE("Lua refs become inert after native data model removal", "[datamodel][lifetime]")
+{
+	// Concern: Lua may hold model refs after RmlUi destroys the native model.
+	// Reads should return nil/empty and writes should not touch native handles.
+	RmlLuaFixture f;
+	f.openModel("destroyed_model", "{ player = { name = 'alive' }, score = 7 }");
+
+	f.lua.safe_script("old_model = model; old_player = model.player");
+	REQUIRE(f.ctx->RemoveDataModel("destroyed_model"));
+
+	CHECK(f.lua.safe_script("return old_model.score").get<sol::object>().get_type() == sol::type::lua_nil);
+	CHECK(f.lua.safe_script("return old_player.name").get<sol::object>().get_type() == sol::type::lua_nil);
+	CHECK(f.lua.safe_script("return #old_player").get<int>() == 0);
+	CHECK_NOTHROW(f.lua.safe_script("old_model.score = 8; old_player.name = 'dead'"));
+}
+
+TEST_CASE("Nested Lua refs stay valid without root proxy until native removal", "[datamodel][lifetime]")
+{
+	// Concern: the C++ model is owned by the Lua-created data model registry,
+	// not only by the root Lua proxy.
+	RmlLuaFixture f;
+	f.openModel("nested_handle_lifetime", "{ player = { name = 'alive' }, score = 7 }");
+
+	f.lua.safe_script("old_player = model.player; model = nil; collectgarbage(); collectgarbage()");
+	CHECK(f.lua.safe_script("return old_player.name").get<std::string>() == "alive");
+
+	REQUIRE(f.ctx->RemoveDataModel("nested_handle_lifetime"));
+	CHECK(f.lua.safe_script("return old_player.name").get<sol::object>().get_type() == sol::type::lua_nil);
+	CHECK_NOTHROW(f.lua.safe_script("old_player.name = 'dead'"));
+}
+
 // ===========================================================================
 // LATE BINDING -- variables added after model creation
 // ===========================================================================

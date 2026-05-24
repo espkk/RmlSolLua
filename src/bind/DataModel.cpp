@@ -7,6 +7,7 @@ namespace Rml::SolLua
 {
 	/// The following functions use uservalue/fenv to query the underlying table,
 	/// rather than accessing the proxy itself, to reduce indirection level and improve cache locality.
+	/// After native disposal markDisposed() empties the backing table, so these naturally yield empty.
 	namespace functions
 	{
 		static int dataModelPairs(lua_State* L) // [-0, +3]
@@ -30,7 +31,7 @@ namespace Rml::SolLua
 		static int dataModelLen(lua_State* L) // [-0, +1]
 		{
 			lua_getuservalue(L, 1); // [tbl]
-			lua_len(L, -1);  // [tbl, len]
+			lua_len(L, -1);         // [tbl, len]
 			return 1;
 		}
 	} // namespace functions

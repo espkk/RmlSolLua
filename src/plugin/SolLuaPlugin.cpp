@@ -4,6 +4,7 @@
 #include <RmlUi/Core.h>
 #include SOLHPP
 
+#include "SolLuaDataModel.h"
 #include "SolLuaInstancer.h"
 #include "SolLuaPlugin.h"
 
@@ -22,7 +23,7 @@ namespace Rml::SolLua
 
 	int SolLuaPlugin::GetEventClasses()
 	{
-		return EVT_BASIC;
+		return EVT_BASIC | EVT_DATA_MODEL;
 	}
 
 	void SolLuaPlugin::OnInitialise()
@@ -37,6 +38,11 @@ namespace Rml::SolLua
 	{
 		m_lua_state.collect_garbage();
 		delete this;
+	}
+
+	void SolLuaPlugin::OnDataModelDestroy(Rml::Context* context, const Rml::String& name)
+	{
+		SolLuaDataModel::NotifyDestroyed(context, name);
 	}
 
 } // end namespace Rml::SolLua
