@@ -56,7 +56,24 @@ namespace Rml::SolLua
 		// Fix the path if a leading colon has been replaced with a pipe.
 		String fixed_path = StringUtilities::Replace(source_path, '|', ':');
 
-		m_state.safe_script_file(fixed_path, m_environment, ErrorHandler);
+		// Run the script. If it returns a function, that function is the document's
+		// entry point: we call it with the document, so `document` is an explicit
+		// parameter rather than an injected global. Re-running the script (e.g. for
+		// hot reload) re-invokes the entry, which re-opens the data model and lets the
+		// C++ side rebind it. Scripts that only run side effects at file scope (and
+		// return nothing) still work unchanged.
+		auto result = m_state.safe_script_file(fixed_path, m_environment, ErrorHandler);
+		if (!result.valid())
+			return;
+
+		sol::object entry = result;
+		if (entry.get_type() != sol::type::function)
+			return;
+
+		sol::protected_function open = entry;
+		auto open_result = open(this);
+		if (!open_result.valid())
+			ErrorHandler(m_state.lua_state(), std::move(open_result));
 	}
 
 	sol::protected_function_result SolLuaDocument::RunLuaScript(const Rml::String& script)
