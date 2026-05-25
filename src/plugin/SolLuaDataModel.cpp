@@ -413,25 +413,41 @@ namespace Rml::SolLua
 		}
 	}
 
-	void SolLuaDataModelProxy::registerTopLevelCallback(const std::string& key, const sol::protected_function& func, lua_State* L)
+	void SolLuaDataModelProxy::registerTopLevelCallback(const std::string& key, const sol::protected_function& /*func*/, lua_State* L)
 	{
+		// RmlUi's BindEventCallback uses emplace - the first lambda we bind for
+		// a given key stays installed forever. So bind once with an indirection
+		// lambda that looks up the current function in m_table at call time;
+		// hot-reload (rebindRoot) replaces m_table, so the lookup naturally
+		// resolves to the new closure without any C++-side mirror of the function.
+		if (!m_datamodel->boundCallbacks().insert(key).second)
+		{
+			return;
+		}
+
 		m_datamodel->constructor().BindEventCallback(
 			key,
-			[cb = func,
-			 state = sol::state_view{L}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
+			[proxy = this, key, state = sol::state_view{L}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
 			{
-				if (cb.valid())
+				if (proxy->m_datamodel->isDisposed())
 				{
-					std::vector<sol::object> args;
-					for (const auto& variant : varlist)
-					{
-						args.push_back(makeObjectFromVariant(&variant, state));
-					}
-					auto pfr = cb(event, sol::as_args(args));
-					if (!pfr.valid())
-					{
-						ErrorHandler(cb.lua_state(), std::move(pfr));
-					}
+					return;
+				}
+				sol::object obj = proxy->m_table[key];
+				if (obj.get_type() != sol::type::function)
+				{
+					return;
+				}
+				sol::protected_function cb(obj);
+				std::vector<sol::object> args;
+				for (const auto& variant : varlist)
+				{
+					args.push_back(makeObjectFromVariant(&variant, state));
+				}
+				auto pfr = cb(event, sol::as_args(args));
+				if (!pfr.valid())
+				{
+					ErrorHandler(cb.lua_state(), std::move(pfr));
 				}
 			}
 		);
@@ -614,7 +630,9 @@ namespace Rml::SolLua
 		// Children that disappeared (or whose value is no longer a table) need to
 		// be rebound to empty - RmlUi still holds raw pointers to their proxies.
 		// Children still present as tables are rebound by registerTopLevelTable
-		// when bind() walks the new table below.
+		// when bind() walks the new table below. Top-level callbacks need no
+		// special handling: the indirection lambda dispatches via m_table at
+		// call time, and m_table has just been replaced above.
 		for (auto& [key, child] : m_children)
 		{
 			sol::object obj = m_table[key];
@@ -625,7 +643,7 @@ namespace Rml::SolLua
 		}
 
 		// Register any keys new to this table; idempotent for existing ones
-		// (registerTopLevelScalar/Table both no-op or rebind in place).
+		// (registerTopLevelScalar/Table/Callback all no-op or rebind in place).
 		bind();
 
 		auto handle = m_datamodel->constructor().GetModelHandle();

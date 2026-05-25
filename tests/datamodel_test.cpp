@@ -638,6 +638,66 @@ TEST_CASE("Function binding: initial and dynamically added", "[datamodel][functi
 	CHECK(f.lua.safe_script("return type(model.on_click)").get<std::string>() == "function");
 }
 
+TEST_CASE("Re-opening with a new callback body replaces the bound function", "[datamodel][hot-reload]")
+{
+	// Concern: hot-reload re-runs OpenDataModel with a fresh src containing a
+	// new closure for the same event-callback key. RmlUi's BindEventCallback
+	// uses emplace and can't replace, so we install an indirection lambda once
+	// and swap the stored function on rebind. After re-open, dispatching the
+	// event should fire the NEW function.
+	RmlLuaFixture f;
+	f.lua.safe_script("counter = 0");
+	f.lua.safe_script(R"(
+		local src = { my_cb = function() counter = counter + 1 end }
+		Context:OpenDataModel('reopen_cb', src)
+	)");
+
+	auto* doc = loadAndUpdate(f.ctx, makeRml("reopen_cb", R"(<button id="b" data-event-click="my_cb()">x</button>)"));
+	auto* btn = doc->GetElementById("b");
+	REQUIRE(btn != nullptr);
+
+	btn->Click();
+	f.ctx->Update();
+	CHECK(f.lua.safe_script("return counter").get<int>() == 1);
+
+	// Hot-reload: re-open with a callback that increments by 10 instead of 1.
+	f.lua.safe_script(R"(
+		local src = { my_cb = function() counter = counter + 10 end }
+		Context:OpenDataModel('reopen_cb', src)
+	)");
+
+	btn->Click();
+	f.ctx->Update();
+	CHECK(f.lua.safe_script("return counter").get<int>() == 11);
+}
+
+TEST_CASE("Re-opening without a previously bound callback makes it inert", "[datamodel][hot-reload]")
+{
+	// Concern: if a callback key is dropped from the new src on rebind, the
+	// RmlUi binding still exists (immutable) but should no-op rather than
+	// invoke the stale closure.
+	RmlLuaFixture f;
+	f.lua.safe_script("counter = 0");
+	f.lua.safe_script(R"(
+		Context:OpenDataModel('drop_cb', { my_cb = function() counter = counter + 1 end })
+	)");
+
+	auto* doc = loadAndUpdate(f.ctx, makeRml("drop_cb", R"(<button id="b" data-event-click="my_cb()">x</button>)"));
+	auto* btn = doc->GetElementById("b");
+	REQUIRE(btn != nullptr);
+
+	btn->Click();
+	f.ctx->Update();
+	REQUIRE(f.lua.safe_script("return counter").get<int>() == 1);
+
+	// Re-open with src missing my_cb entirely.
+	f.lua.safe_script("Context:OpenDataModel('drop_cb', { other = 1 })");
+
+	btn->Click();
+	f.ctx->Update();
+	CHECK(f.lua.safe_script("return counter").get<int>() == 1);
+}
+
 // ===========================================================================
 // BOOLEAN / DATA-IF
 // ===========================================================================
