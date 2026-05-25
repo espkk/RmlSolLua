@@ -351,7 +351,9 @@ namespace Rml::SolLua
 
 	sol::object& SolLuaDataModelProxy::luaUserdata()
 	{
-		if (!m_luaUserdata.valid())
+		// Never (re)create the cached userdata for a disposed proxy: doing so would
+		// re-establish the self-referential cycle that markDisposed() just broke.
+		if (!m_luaUserdata.valid() && !isDisposed())
 		{
 			cacheUserdata();
 		}
@@ -683,7 +685,14 @@ namespace Rml::SolLua
 		m_table = sol::table(m_table.lua_state(), sol::create);
 		if (m_luaUserdata.valid())
 		{
+			// Point any external references at the now-empty table so reads return nil...
 			attachRawTableAsUservalueTo(m_luaUserdata);
+			// ...then drop our own cached reference. It aliases this proxy's owning
+			// shared_ptr, so keeping it would make the model immortal: the C++ object
+			// pins a Lua userdata that pins the C++ object back, an unbreakable cycle
+			// until lua_close. Releasing it leaves only external Lua refs, so the model
+			// is reclaimed once those are collected (the tombstone contract above).
+			m_luaUserdata = sol::lua_nil;
 		}
 	}
 
