@@ -652,7 +652,7 @@ TEST_CASE("Re-opening with a new callback body replaces the bound function", "[d
 		Context:OpenDataModel('reopen_cb', src)
 	)");
 
-	auto* doc = loadAndUpdate(f.ctx, makeRml("reopen_cb", R"(<button id="b" data-event-click="my_cb()">x</button>)"));
+	auto* doc = loadAndUpdate(f.ctx, makeRml("reopen_cb", R"RML(<button id="b" data-event-click="my_cb()">x</button>)RML"));
 	auto* btn = doc->GetElementById("b");
 	REQUIRE(btn != nullptr);
 
@@ -682,7 +682,7 @@ TEST_CASE("Re-opening without a previously bound callback makes it inert", "[dat
 		Context:OpenDataModel('drop_cb', { my_cb = function() counter = counter + 1 end })
 	)");
 
-	auto* doc = loadAndUpdate(f.ctx, makeRml("drop_cb", R"(<button id="b" data-event-click="my_cb()">x</button>)"));
+	auto* doc = loadAndUpdate(f.ctx, makeRml("drop_cb", R"RML(<button id="b" data-event-click="my_cb()">x</button>)RML"));
 	auto* btn = doc->GetElementById("b");
 	REQUIRE(btn != nullptr);
 
