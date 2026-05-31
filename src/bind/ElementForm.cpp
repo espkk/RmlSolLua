@@ -65,7 +65,8 @@ namespace Rml::SolLua
 
 		struct SelectOptionsProxy
 		{
-			SelectOptionsProxy(Rml::ElementFormControlSelect& element) : m_element(element)
+			SelectOptionsProxy(Rml::ElementFormControlSelect& element)
+			    : m_element(element)
 			{}
 
 			SelectOptionsProxyNode Get(int index) const

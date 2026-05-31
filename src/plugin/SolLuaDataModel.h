@@ -76,14 +76,26 @@ namespace Rml::SolLua
 
 		SolLuaDataModel(const sol::table& model, const Rml::DataModelConstructor& constructor);
 
-		Rml::DataModelConstructor constructor() const { return m_constructor; }
-		SolLuaDataModelProxy& topLevelProxy() { return m_topLevelProxy; }
-		bool isDisposed() const { return m_disposed; }
+		Rml::DataModelConstructor constructor() const
+		{
+			return m_constructor;
+		}
+		SolLuaDataModelProxy& topLevelProxy()
+		{
+			return m_topLevelProxy;
+		}
+		bool isDisposed() const
+		{
+			return m_disposed;
+		}
 
 		// Names of top-level callbacks already bound to RmlUi via an indirection
 		// lambda. Used by registerTopLevelCallback to avoid re-binding on rebind
 		// (RmlUi's BindEventCallback uses emplace and logs a warning on duplicates).
-		std::unordered_set<std::string>& boundCallbacks() { return m_boundCallbacks; }
+		std::unordered_set<std::string>& boundCallbacks()
+		{
+			return m_boundCallbacks;
+		}
 
 	private:
 		bool m_disposed = false;

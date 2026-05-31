@@ -767,11 +767,10 @@ TEST_CASE("Nil intermediate in chain renders empty in document", "[datamodel][ed
 	RmlLuaFixture f;
 	f.openModel("nil_chain", "{ a = { b = { c = 'found' } } }");
 
-	auto* doc = loadAndUpdate(f.ctx, makeRml("nil_chain",
-		R"(<p id="hit">{{a.b.c}}</p>)"
-		R"(<p id="missing_leaf">{{a.b.missing}}</p>)"
-		R"(<p id="missing_mid">{{a.missing.c}}</p>)"
-		R"(<p id="missing_top">{{nope.b.c}}</p>)"));
+	auto* doc = loadAndUpdate(f.ctx, makeRml("nil_chain", R"(<p id="hit">{{a.b.c}}</p>)"
+	                                                      R"(<p id="missing_leaf">{{a.b.missing}}</p>)"
+	                                                      R"(<p id="missing_mid">{{a.missing.c}}</p>)"
+	                                                      R"(<p id="missing_top">{{nope.b.c}}</p>)"));
 
 	CHECK(innerRmlOf(doc, "hit") == "found");
 	CHECK(innerRmlOf(doc, "missing_leaf") == "");

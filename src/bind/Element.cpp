@@ -106,7 +106,8 @@ namespace Rml::SolLua
 	{
 		struct StyleProxyIter
 		{
-			StyleProxyIter(Rml::PropertiesIteratorView&& self) : Iterator(std::move(self))
+			StyleProxyIter(Rml::PropertiesIteratorView&& self)
+			    : Iterator(std::move(self))
 			{}
 			Rml::PropertiesIteratorView Iterator;
 		};
@@ -125,7 +126,8 @@ namespace Rml::SolLua
 
 		struct StyleProxy
 		{
-			StyleProxy(Rml::Element& element) : m_element(element)
+			StyleProxy(Rml::Element& element)
+			    : m_element(element)
 			{}
 
 			std::string Get(const std::string& name)
