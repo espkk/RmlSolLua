@@ -212,7 +212,7 @@ namespace Rml::SolLua
 	bool SolLuaDataModelProxy::Set(void* ptr, const Rml::Variant& variant)
 	{
 		RMLUI_ASSERT(variant.GetType() != Variant::VOIDPTR && "VOIDPTR is reserved for datamodel reference and unexpected in this context."
-		            "If this assert breaks, we need to change the approach (see `Get()`).");
+		                                                      "If this assert breaks, we need to change the approach (see `Get()`).");
 
 		if (ptr == nullptr)
 		{
@@ -396,7 +396,7 @@ namespace Rml::SolLua
 		{
 			it->second.m_topLevelKey = &it->first;
 			m_datamodel->constructor().BindCustomDataVariable(
-				key, Rml::DataVariable(&it->second, nullptr)
+			    key, Rml::DataVariable(&it->second, nullptr)
 			);
 			return;
 		}
@@ -410,7 +410,7 @@ namespace Rml::SolLua
 		if (inserted)
 		{
 			m_datamodel->constructor().BindCustomDataVariable(
-				key, Rml::DataVariable(m_selfAsScalar.get(), const_cast<char*>(it->data()))
+			    key, Rml::DataVariable(m_selfAsScalar.get(), const_cast<char*>(it->data()))
 			);
 		}
 	}
@@ -428,30 +428,30 @@ namespace Rml::SolLua
 		}
 
 		m_datamodel->constructor().BindEventCallback(
-			key,
-			[proxy = this, key, state = sol::state_view{L}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
-			{
-				if (proxy->m_datamodel->isDisposed())
-				{
-					return;
-				}
-				sol::object obj = proxy->m_table[key];
-				if (obj.get_type() != sol::type::function)
-				{
-					return;
-				}
-				sol::protected_function cb(obj);
-				std::vector<sol::object> args;
-				for (const auto& variant : varlist)
-				{
-					args.push_back(makeObjectFromVariant(&variant, state));
-				}
-				auto pfr = cb(event, sol::as_args(args));
-				if (!pfr.valid())
-				{
-					ErrorHandler(cb.lua_state(), std::move(pfr));
-				}
-			}
+		    key,
+		    [proxy = this, key, state = sol::state_view{L}](Rml::DataModelHandle, Rml::Event& event, const Rml::VariantList& varlist)
+		    {
+			    if (proxy->m_datamodel->isDisposed())
+			    {
+				    return;
+			    }
+			    sol::object obj = proxy->m_table[key];
+			    if (obj.get_type() != sol::type::function)
+			    {
+				    return;
+			    }
+			    sol::protected_function cb(obj);
+			    std::vector<sol::object> args;
+			    for (const auto& variant : varlist)
+			    {
+				    args.push_back(makeObjectFromVariant(&variant, state));
+			    }
+			    auto pfr = cb(event, sol::as_args(args));
+			    if (!pfr.valid())
+			    {
+				    ErrorHandler(cb.lua_state(), std::move(pfr));
+			    }
+		    }
 		);
 	}
 
@@ -496,15 +496,15 @@ namespace Rml::SolLua
 			if (value.get_type() == sol::type::table && self.m_keys.contains(skey))
 			{
 				Rml::Log::Message(Rml::Log::LT_ERROR, "[LUA][ERROR] Cannot change top-level scalar '%s' to a table: "
-													  "RmlUi bindings are immutable after creation",
-								  skey.c_str());
+				                                      "RmlUi bindings are immutable after creation",
+				                  skey.c_str());
 				return;
 			}
 			if (value.get_type() != sol::type::table && value.get_type() != sol::type::lua_nil && self.m_children.contains(skey))
 			{
 				Rml::Log::Message(Rml::Log::LT_ERROR, "[LUA][ERROR] Cannot change top-level table '%s' to a non-table: "
-													  "RmlUi bindings are immutable after creation",
-								  skey.c_str());
+				                                      "RmlUi bindings are immutable after creation",
+				                  skey.c_str());
 				return;
 			}
 		}
@@ -692,7 +692,7 @@ namespace Rml::SolLua
 			// pins a Lua userdata that pins the C++ object back, an unbreakable cycle
 			// until lua_close. Releasing it leaves only external Lua refs, so the model
 			// is reclaimed once those are collected (the tombstone contract above).
-			m_luaUserdata = sol::lua_nil;
+			m_luaUserdata = sol::make_object(m_table.lua_state(), sol::lua_nil);
 		}
 	}
 
