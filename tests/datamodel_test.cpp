@@ -698,6 +698,33 @@ TEST_CASE("Re-opening without a previously bound callback makes it inert", "[dat
 	CHECK(f.lua.safe_script("return counter").get<int>() == 1);
 }
 
+TEST_CASE("Re-opening keeps existing Lua proxy references bound to the new source table", "[datamodel][hot-reload]")
+{
+	// Concern: the UI runtime keeps stable module/view objects across Lua hot
+	// reloads. Any Lua code holding old root or nested model refs must observe
+	// the new table after OpenDataModel re-runs, not stale data from before reload.
+	RmlLuaFixture f;
+	f.lua.safe_script(R"(
+		model = Context:OpenDataModel('stable_reopen', {
+			title = 'old',
+			panel = { label = 'before' },
+		})
+		old_model = model
+		old_panel = model.panel
+	)");
+
+	f.lua.safe_script(R"(
+		reopened = Context:OpenDataModel('stable_reopen', {
+			title = 'new',
+			panel = { label = 'after' },
+		})
+	)");
+
+	CHECK(f.lua.safe_script("return old_model == reopened").get<bool>() == true);
+	CHECK(f.lua.safe_script("return old_model.title").get<std::string>() == "new");
+	CHECK(f.lua.safe_script("return old_panel.label").get<std::string>() == "after");
+}
+
 // ===========================================================================
 // BOOLEAN / DATA-IF
 // ===========================================================================
